@@ -1,0 +1,94 @@
+name: GCP Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  SERVICE_NAME: go-api
+  REGION: us-central1
+  REGISTRY: gcr.io
+
+jobs:
+  deploy:
+    name: Deploy to GCP
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
+
+      - name: Run tests (optional)
+        run: |
+          go mod download
+          go test -v ./...
+        continue-on-error: true
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker for GCR
+        run: |
+          gcloud auth configure-docker gcr.io
+
+      - name: Build and tag Docker image
+        run: |
+          docker build -t $REGISTRY/$PROJECT_ID/$SERVICE_NAME:${{ github.sha }} .
+          docker tag $REGISTRY/$PROJECT_ID/$SERVICE_NAME:${{ github.sha }} $REGISTRY/$PROJECT_ID/$SERVICE_NAME:latest
+
+      - name: Push Docker image to GCR
+        run: |
+          docker push $REGISTRY/$PROJECT_ID/$SERVICE_NAME:${{ github.sha }}
+          docker push $REGISTRY/$PROJECT_ID/$SERVICE_NAME:latest
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy $SERVICE_NAME \
+            --image $REGISTRY/$PROJECT_ID/$SERVICE_NAME:${{ github.sha }} \
+            --platform managed \
+            --region $REGION \
+            --allow-unauthenticated \
+            --port 8080 \
+            --memory 512Mi \
+            --cpu 1 \
+            --min-instances 0 \
+            --max-instances 10 \
+            --set-env-vars="ENV=${{ github.event.inputs.environment }}" \
+            --quiet
+
+      - name: Get service URL
+        id: get-url
+        run: |
+          SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region $REGION --format 'value(status.url)')
+          echo "SERVICE_URL=$SERVICE_URL" >> $GITHUB_OUTPUT
+          echo "Service deployed at: $SERVICE_URL"
+
+      - name: Test deployment
+        run: |
+          sleep 30  # Wait for service to be ready
+          curl -f ${{ steps.get-url.outputs.SERVICE_URL }} || exit 1
+          echo "Deployment test passed!"
+
+      - name: Deployment Summary
+        run: |
+          echo "🚀 Deployment Summary:"
+          echo "- Environment: ${{ github.event.inputs.environment }}"
+          echo "- Branch: ${{ github.ref_name }}"
+          echo "- Commit: ${{ github.sha }}"
+          echo "- Service URL: ${{ steps.get-url.outputs.SERVICE_URL }}"
