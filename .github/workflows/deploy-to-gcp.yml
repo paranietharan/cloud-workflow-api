@@ -18,7 +18,7 @@ env:
   SERVICE_NAME: go-api
   REGION: us-central1
   REGISTRY: us-central1-docker.pkg.dev
-  REPOSITORY: go-api-repo
+  REPOSITORY: cloud-workflow-api
 
 jobs:
   deploy:
