@@ -26,7 +26,7 @@ func main() {
 
 	router.Use(gin.LoggerWithFormatter(customLogger))
 
-	router.Run("localhost:8080")
+	router.Run(":8080")
 }
 
 func customLogger(param gin.LogFormatterParams) string {
